@@ -1,0 +1,42 @@
+<!-- /root/shopline-web/templates/index.html -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shopline Bulk Order</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 2em; }
+    form div { margin-bottom: 1em; }
+    input { width: 100%; max-width: 400px; }
+    button { padding: 0.5em 1em; }
+    .error { color: red; }
+  </style>
+</head>
+<body>
+  <h1>Shopline Bulk Order Uploader</h1>
+  {% if error %}
+    <p class="error">{{ error }}</p>
+  {% endif %}
+  <form method="POST" enctype="multipart/form-data">
+    <div>
+      <label>CSV File:<br>
+        <input type="file" name="csv_file" accept=".csv" required>
+      </label>
+    </div>
+    <div>
+      <label>Access Token:<br>
+        <input type="password" name="access_token" required>
+      </label>
+    </div>
+    <div>
+      <label>Store Domain:<br>
+        <input type="text" name="store_domain" placeholder="example.myshopline.com" required>
+      </label>
+    </div>
+    <div>
+      <button type="submit">Process Orders</button>
+    </div>
+  </form>
+</body>
+</html>
