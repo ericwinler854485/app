@@ -1,0 +1,105 @@
+name: Video to HLS (m3u8) ZIP
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: "Direct video file URL (mp4/mkv/etc)"
+        required: true
+        type: string
+      chunk_seconds:
+        description: "HLS chunk duration in seconds"
+        required: false
+        default: "10"
+        type: string
+      target_chunk_mb:
+        description: "Approx target size per chunk (MB)"
+        required: false
+        default: "12"
+        type: string
+      audio_kbps:
+        description: "Audio bitrate kbps"
+        required: false
+        default: "128"
+        type: string
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg zip curl gawk
+
+      - name: Download video
+        run: |
+          set -euxo pipefail
+          mkdir -p work/input
+          URL='${{ inputs.video_url }}'
+
+          EXT="$(echo "$URL" | sed -n 's/.*\.\([a-zA-Z0-9]\{2,5\}\)\(\?.*\)\?$/\1/p' | tr 'A-Z' 'a-z')"
+          if [ -z "$EXT" ]; then EXT="mp4"; fi
+
+          OUT="work/input/input.$EXT"
+          curl -L --fail --retry 3 --retry-delay 2 -o "$OUT" "$URL"
+          ls -lh "$OUT"
+
+      - name: Convert to HLS (CPU x264)
+        run: |
+          set -euxo pipefail
+
+          INFILE="$(ls work/input/input.* | head -n 1)"
+          CHUNK='${{ inputs.chunk_seconds }}'
+          MB='${{ inputs.target_chunk_mb }}'
+          A_KBPS='${{ inputs.audio_kbps }}'
+
+          mkdir -p work/out
+
+          # total_kbps ≈ (MB * 8 * 1024) / CHUNK
+          TOTAL_KBPS="$(awk -v mb="$MB" -v chunk="$CHUNK" 'BEGIN{ if(chunk<=0)chunk=1; printf "%d", (mb*8*1024)/chunk }')"
+          V_KBPS=$(( TOTAL_KBPS - A_KBPS - 50 ))
+          if [ "$V_KBPS" -lt 500 ]; then V_KBPS=500; fi
+
+          echo "Input: $INFILE"
+          echo "Chunk seconds: $CHUNK"
+          echo "Target chunk MB: $MB"
+          echo "Audio kbps: $A_KBPS"
+          echo "Total kbps approx: $TOTAL_KBPS"
+          echo "Video kbps used: $V_KBPS"
+
+          KEYINT=$(( CHUNK * 30 ))
+
+          ffmpeg -y -hide_banner \
+            -i "$INFILE" \
+            -c:v libx264 -preset veryfast \
+            -b:v "${V_KBPS}k" -maxrate "${V_KBPS}k" -bufsize "$((V_KBPS*2))k" \
+            -pix_fmt yuv420p \
+            -g "$KEYINT" -keyint_min "$KEYINT" \
+            -force_key_frames "expr:gte(t,n_forced*${CHUNK})" \
+            -c:a aac -b:a "${A_KBPS}k" -ac 2 -ar 48000 \
+            -hls_time "$CHUNK" \
+            -hls_playlist_type vod \
+            -hls_flags independent_segments \
+            -hls_segment_filename "work/out/seg_%05d.ts" \
+            "work/out/index.m3u8"
+
+          ls -lh work/out | head
+
+      - name: Zip output
+        run: |
+          set -euxo pipefail
+          cd work
+          zip -r hls_output.zip out
+
+      - name: Upload ZIP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hls_output_zip
+          path: work/hls_output.zip
+          retention-days: 7
